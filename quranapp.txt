@@ -1,0 +1,2088 @@
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+
+void main() {
+  runApp(const QuranPashtoDartPadApp());
+}
+
+/// Root Application Widget with a calm light green and white Islamic educational palette
+class QuranPashtoDartPadApp extends StatelessWidget {
+  const QuranPashtoDartPadApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'قرآن کریم - پښتو ترجمه',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        scaffoldBackgroundColor: const Color(0xFFF7FAF7),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF2E7D32), // Emerald Green
+          primary: const Color(0xFF1B5E20),   // Deep Calm Islamic Green
+          surface: Colors.white,
+          onPrimary: Colors.white,
+          onSurface: const Color(0xFF1F2937),
+        ),
+        appBarTheme: const AppBarTheme(
+          elevation: 0,
+          centerTitle: true,
+          backgroundColor: Colors.white,
+          foregroundColor: Color(0xFF1B5E20),
+          surfaceTintColor: Colors.transparent,
+          iconTheme: IconThemeData(color: Color(0xFF1B5E20)),
+          titleTextStyle: TextStyle(
+            color: Color(0xFF1B5E20),
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 0.2,
+          ),
+        ),
+      ),
+      home: const QuranHomeScreen(),
+    );
+  }
+}
+
+/// Model representing a single word's grammatical breakdown and I'rab in Pashto
+class PashtoWordAnalysis {
+  final String word;
+  final String analysis;
+
+  const PashtoWordAnalysis({
+    required this.word,
+    required this.analysis,
+  });
+
+  factory PashtoWordAnalysis.fromJson(Map<String, dynamic> json) {
+    return PashtoWordAnalysis(
+      word: json['word']?.toString() ?? '',
+      analysis: json['analysis']?.toString() ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'word': word,
+    'analysis': analysis,
+  };
+}
+
+/// Model representing complete sentence & word-level I'rab analysis in Pashto
+class PashtoIrabAnalysis {
+  final String title;
+  final List<PashtoWordAnalysis> words;
+  final String sentenceNote;
+
+  const PashtoIrabAnalysis({
+    required this.title,
+    required this.words,
+    required this.sentenceNote,
+  });
+
+  factory PashtoIrabAnalysis.fromJson(Map<String, dynamic> json) {
+    final rawWords = json['words'] as List<dynamic>? ?? [];
+    return PashtoIrabAnalysis(
+      title: json['title']?.toString() ?? 'د کلماتو نحوي ترکیب او اعراب (په پښتو ژبه)',
+      words: rawWords.map((w) => PashtoWordAnalysis.fromJson(w as Map<String, dynamic>)).toList(),
+      sentenceNote: json['sentence_note']?.toString() ?? json['sentenceNote']?.toString() ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'title': title,
+    'words': words.map((w) => w.toJson()).toList(),
+    'sentence_note': sentenceNote,
+  };
+}
+
+/// Model class representing an Ayah (Verse) with Arabic, Pashto translation, and optional I'rab
+class Ayah {
+  final int number;
+  final String arabicText;
+  final String pashtoTranslation;
+  final PashtoIrabAnalysis? irabAnalysis;
+
+  const Ayah({
+    required this.number,
+    required this.arabicText,
+    required this.pashtoTranslation,
+    this.irabAnalysis,
+  });
+
+  factory Ayah.fromJson(Map<String, dynamic> json, int defaultNumber) {
+    PashtoIrabAnalysis? parsedIrab;
+    if (json['pashto_iab_analysis'] != null) {
+      parsedIrab = PashtoIrabAnalysis.fromJson(json['pashto_iab_analysis'] as Map<String, dynamic>);
+    } else if (json['pashto_irab_analysis'] != null) {
+      parsedIrab = PashtoIrabAnalysis.fromJson(json['pashto_irab_analysis'] as Map<String, dynamic>);
+    } else if (json['irab'] != null) {
+      parsedIrab = PashtoIrabAnalysis.fromJson(json['irab'] as Map<String, dynamic>);
+    }
+
+    return Ayah(
+      number: json['number'] ?? json['ayah_number'] ?? json['verse'] ?? json['index'] ?? defaultNumber,
+      arabicText: json['content'] ?? json['arabic_text'] ?? json['arabic'] ?? json['text'] ?? '',
+      pashtoTranslation: json['translation'] ?? json['pashto_translation'] ?? json['pashto'] ?? '',
+      irabAnalysis: parsedIrab,
+    );
+  }
+}
+
+/// Model class representing a Quranic Surah parsed from the User's exact 114 Surahs JSON schema
+class Surah {
+  final int number;
+  final String arabicName;
+  final String englishName;
+  final String pashtoName;
+  final String pashtoMeaning;
+  final int totalVerses;
+  final String revelationType; // 'مکي' or 'مدني'
+  final String place;          // 'Mecca' or 'Medina'
+  final String pages;          // Quran Mushaf page start
+  final List<Ayah> verses;
+
+  const Surah({
+    required this.number,
+    required this.arabicName,
+    required this.englishName,
+    required this.pashtoName,
+    required this.pashtoMeaning,
+    required this.totalVerses,
+    required this.revelationType,
+    required this.place,
+    required this.pages,
+    this.verses = const [],
+  });
+
+  /// Factory constructor parsing the user's exact JSON keys:
+  /// titleAr, titlePs, title, count, type, place, index, pages, etc.
+  factory Surah.fromJson(Map<String, dynamic> json) {
+    final int surahNumber = int.tryParse(json['index']?.toString() ?? '') ??
+        (json['number'] is int ? json['number'] : int.tryParse(json['number']?.toString() ?? '1') ?? 1);
+
+    final String arabicTitle = json['titleAr'] ?? json['arabic_name'] ?? json['arabicName'] ?? 'سورت';
+    final String pashtoTitle = json['titlePs'] ?? json['pashto_name'] ?? json['pashtoMeaning'] ?? '';
+    final String englishTitle = json['title'] ?? json['english_name'] ?? json['englishName'] ?? '';
+    final int verseCount = json['count'] ?? json['total_verses'] ?? json['totalVerses'] ?? 0;
+    final String rawPlace = json['place']?.toString() ?? 'Mecca';
+    final String rawType = json['type']?.toString() ?? (rawPlace == 'Mecca' ? 'Makkiyah' : 'Madaniyah');
+    final String revType = (rawType.toLowerCase().contains('makki') || rawPlace == 'Mecca') ? 'مکي' : 'مدني';
+    final String startPage = json['pages']?.toString() ?? '1';
+
+    // Parse verses if present in the JSON
+    final rawVerses = json['verses'] as List<dynamic>? ?? [];
+    int vCount = 1;
+    final List<Ayah> parsedVerses = rawVerses.map((v) {
+      return Ayah.fromJson(v as Map<String, dynamic>, vCount++);
+    }).toList();
+
+    return Surah(
+      number: surahNumber,
+      arabicName: arabicTitle,
+      englishName: englishTitle,
+      pashtoName: 'سورت $arabicTitle',
+      pashtoMeaning: pashtoTitle,
+      totalVerses: verseCount,
+      revelationType: revType,
+      place: rawPlace,
+      pages: startPage,
+      verses: parsedVerses,
+    );
+  }
+}
+
+/// Home Screen displaying:
+/// 1. AppBar with the title 'قرآن کریم - پښتو ترجمه' and Search Bar
+/// 2. 114 Surahs parsed from the User's exact JSON format
+/// 3. Calm light green and white educational UI style
+class QuranHomeScreen extends StatefulWidget {
+  const QuranHomeScreen({super.key});
+
+  @override
+  State<QuranHomeScreen> createState() => _QuranHomeScreenState();
+}
+
+class _QuranHomeScreenState extends State<QuranHomeScreen> {
+  int _selectedNavIndex = 0;
+  String _selectedFilter = 'ټول'; // 'ټول', 'مکي', 'مدني'
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  bool _isAppBarSearching = false;
+
+  List<Surah> _surahs = [];
+  bool _isLoading = true;
+  String _dataUrl = 'https://raw.githubusercontent.com/wafaarashid29/quran-data/main/quran_pashto.json';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSurahs();
+  }
+
+  /// Loads the 114 Surahs from the remote public URL or uses the full embedded dataset
+  Future<void> _loadSurahs() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final response = await http.get(
+        Uri.parse(_dataUrl),
+        headers: {'Accept': 'application/json'},
+      ).timeout(const Duration(seconds: 4));
+
+      if (response.statusCode == 200) {
+        final decoded = json.decode(utf8.decode(response.bodyBytes));
+        List<dynamic> jsonList = decoded is List
+            ? decoded
+            : (decoded is Map && decoded['surahs'] != null ? decoded['surahs'] : []);
+
+        if (jsonList.isNotEmpty) {
+          final loaded = jsonList.map((item) => Surah.fromJson(item as Map<String, dynamic>)).toList();
+          if (mounted) {
+            setState(() {
+              _surahs = loaded;
+              _isLoading = false;
+            });
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      debugPrint('Remote URL fetch skipped or CORS blocked: $e');
+    }
+
+    // Load the 114 Surahs dataset matching the User's exact schema
+    if (mounted) {
+      setState(() {
+        _surahs = _get114SurahsDataset();
+        _isLoading = false;
+      });
+    }
+  }
+
+  /// Complete 114 Surahs list parsed using the User's exact schema
+  List<Surah> _get114SurahsDataset() {
+    final List<Map<String, dynamic>> rawData = [
+      {"place": "Mecca", "type": "Makkiyah", "count": 7, "title": "Al-Fatiha", "titleAr": "الفاتحة", "titlePs": "خلاصونکی", "index": "001", "pages": "1"},
+      {"place": "Medina", "type": "Madaniyah", "count": 286, "title": "Al-Baqara", "titleAr": "البقرة", "titlePs": "غوا", "index": "002", "pages": "2"},
+      {"place": "Medina", "type": "Madaniyah", "count": 200, "title": "Aal-Imran", "titleAr": "آل عمران", "titlePs": "د عمران کورنۍ", "index": "003", "pages": "45"},
+      {"place": "Medina", "type": "Madaniyah", "count": 176, "title": "An-Nisaa'", "titleAr": "النساء", "titlePs": "هغه میرمن", "index": "004", "pages": "69"},
+      {"place": "Medina", "type": "Madaniyah", "count": 120, "title": "Al-Ma'ida", "titleAr": "المائدة", "titlePs": "د دسترخوان سورت", "index": "005", "pages": "95"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 165, "title": "Al-An'am", "titleAr": "الأنعام", "titlePs": "څاروي", "index": "006", "pages": "115"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 206, "title": "Al-A'raf", "titleAr": "الأعراف", "titlePs": "لوړ ځایونه", "index": "007", "pages": "136"},
+      {"place": "Medina", "type": "Madaniyah", "count": 75, "title": "Al-Anfal", "titleAr": "الأنفال", "titlePs": "د غنیمت مالونه", "index": "008", "pages": "160"},
+      {"place": "Medina", "type": "Madaniyah", "count": 129, "title": "Al-Tawba", "titleAr": "التوبة", "titlePs": "توبه", "index": "009", "pages": "169"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 109, "title": "Yunus", "titleAr": "يونس", "titlePs": "یونس عليه السلام", "index": "010", "pages": "187"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 123, "title": "Hud", "titleAr": "هود", "titlePs": "هود عليه السلام", "index": "011", "pages": "199"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 111, "title": "Yusuf", "titleAr": "يوسف", "titlePs": "یوسف عليه السلام", "index": "012", "pages": "212"},
+      {"place": "Medina", "type": "Madaniyah", "count": 43, "title": "Ar-Ra'd", "titleAr": "الرعد", "titlePs": "تندر", "index": "013", "pages": "225"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 52, "title": "Ibrahim", "titleAr": "إبراهيم", "titlePs": "ابراهیم عليه السلام", "index": "014", "pages": "231"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 99, "title": "Al-Hijr", "titleAr": "الحجر", "titlePs": "ډبرینه دره", "index": "015", "pages": "237"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 128, "title": "An-Nahl", "titleAr": "النحل", "titlePs": "د شاتو مچۍ", "index": "016", "pages": "242"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 111, "title": "Al-Israa", "titleAr": "الإسراء", "titlePs": "د شپې سفر", "index": "017", "pages": "255"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 110, "title": "Al-Kahf", "titleAr": "الكهف", "titlePs": "غار", "index": "018", "pages": "266"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 98, "title": "Maryam", "titleAr": "مريم", "titlePs": "بي بي مریم", "index": "019", "pages": "277"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 135, "title": "Ta-Ha", "titleAr": "طه", "titlePs": "طه", "index": "020", "pages": "284"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 112, "title": "Al-Anbiya", "titleAr": "الأنبياء", "titlePs": "پیغمبران", "index": "021", "pages": "294"},
+      {"place": "Medina", "type": "Madaniyah", "count": 78, "title": "Al-Hajj", "titleAr": "الحج", "titlePs": "حج", "index": "022", "pages": "302"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 118, "title": "Al-Muminun", "titleAr": "المؤمنون", "titlePs": "مؤمنان", "index": "023", "pages": "311"},
+      {"place": "Medina", "type": "Madaniyah", "count": 64, "title": "An-Nur", "titleAr": "النور", "titlePs": "رڼا", "index": "024", "pages": "319"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 77, "title": "Al-Furqan", "titleAr": "الفرقان", "titlePs": "توپیر کوونکی", "index": "025", "pages": "329"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 227, "title": "Ash-Shuara", "titleAr": "الشعراء", "titlePs": "شاعران", "index": "026", "pages": "335"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 93, "title": "An-Naml", "titleAr": "النمل", "titlePs": "میږی", "index": "027", "pages": "345"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 88, "title": "Al-Qasas", "titleAr": "القصص", "titlePs": "کیسې", "index": "028", "pages": "354"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 69, "title": "Al-Ankabut", "titleAr": "العنكبوت", "titlePs": "غڼه (جولاګۍ)", "index": "029", "pages": "364"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 60, "title": "Ar-Rum", "titleAr": "الروم", "titlePs": "رومیان", "index": "030", "pages": "371"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 34, "title": "Luqman", "titleAr": "لقمان", "titlePs": "لقمان حکیم", "index": "031", "pages": "377"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 30, "title": "As-Sajdah", "titleAr": "السجدة", "titlePs": "سجده", "index": "032", "pages": "381"},
+      {"place": "Medina", "type": "Madaniyah", "count": 73, "title": "Al-Ahzab", "titleAr": "الأحزاب", "titlePs": "ګډې ډلې", "index": "033", "pages": "383"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 54, "title": "Saba", "titleAr": "سبأ", "titlePs": "سبا", "index": "034", "pages": "393"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 45, "title": "Fatir", "titleAr": "فاطر", "titlePs": "پیدا کوونکی", "index": "035", "pages": "399"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 83, "title": "Yasin", "titleAr": "يس", "titlePs": "یاسین", "index": "036", "pages": "404"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 182, "title": "As-Saffat", "titleAr": "الصافات", "titlePs": "صف تړونکي", "index": "037", "pages": "410"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 88, "title": "Sad", "titleAr": "ص", "titlePs": "صاد", "index": "038", "pages": "417"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 75, "title": "Az-Zumar", "titleAr": "الزمر", "titlePs": "ډلې ډلې", "index": "039", "pages": "422"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 85, "title": "Ghafir", "titleAr": "غافر", "titlePs": "بخښونکی", "index": "040", "pages": "431"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 54, "title": "Fussilat", "titleAr": "فصلت", "titlePs": "بیان شوی", "index": "041", "pages": "439"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 53, "title": "Ash-Shura", "titleAr": "الشورى", "titlePs": "مشوره", "index": "042", "pages": "445"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 89, "title": "Az-Zukhruf", "titleAr": "الزخرف", "titlePs": "ښکلا او زر", "index": "043", "pages": "451"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 59, "title": "Ad-Dukhan", "titleAr": "الدخان", "titlePs": "لوګی", "index": "044", "pages": "457"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 37, "title": "Al-Jathiya", "titleAr": "الجاثية", "titlePs": "پر زنګنونو ناست", "index": "045", "pages": "460"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 35, "title": "Al-Ahqaf", "titleAr": "الأحقاف", "titlePs": "شګلنې غونډۍ", "index": "046", "pages": "464"},
+      {"place": "Medina", "type": "Madaniyah", "count": 38, "title": "Muhammad", "titleAr": "محمد", "titlePs": "محمد رسول الله ﷺ", "index": "047", "pages": "468"},
+      {"place": "Medina", "type": "Madaniyah", "count": 29, "title": "Al-Fath", "titleAr": "الفتح", "titlePs": "بریا (فتح)", "index": "048", "pages": "472"},
+      {"place": "Medina", "type": "Madaniyah", "count": 18, "title": "Al-Hujurat", "titleAr": "الحجرات", "titlePs": "خونې (کوټې)", "index": "049", "pages": "477"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 45, "title": "Qaf", "titleAr": "ق", "titlePs": "قاف", "index": "050", "pages": "479"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 60, "title": "Az-Zariyat", "titleAr": "الذاريات", "titlePs": "الوزوونکي بادونه", "index": "051", "pages": "482"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 49, "title": "At-Tur", "titleAr": "الطور", "titlePs": "د طور غر", "index": "052", "pages": "485"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 62, "title": "An-Najm", "titleAr": "النجم", "titlePs": "ستوری", "index": "053", "pages": "487"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 55, "title": "Al-Qamar", "titleAr": "القمر", "titlePs": "سپوږمۍ", "index": "054", "pages": "490"},
+      {"place": "Medina", "type": "Madaniyah", "count": 78, "title": "Ar-Rahman", "titleAr": "الرحمن", "titlePs": "خورا زیات مهربان", "index": "055", "pages": "493"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 96, "title": "Al-Waqia", "titleAr": "الواقعة", "titlePs": "قیامت (پېښېدونکې پېښه)", "index": "056", "pages": "496"},
+      {"place": "Medina", "type": "Madaniyah", "count": 29, "title": "Al-Hadid", "titleAr": "الحديد", "titlePs": "اوسپنه", "index": "057", "pages": "499"},
+      {"place": "Medina", "type": "Madaniyah", "count": 22, "title": "Al-Mujadilah", "titleAr": "المجادلة", "titlePs": "بحث کوونکې مېرمن", "index": "058", "pages": "504"},
+      {"place": "Medina", "type": "Madaniyah", "count": 24, "title": "Al-Hashr", "titleAr": "الحشر", "titlePs": "راټولېدل", "index": "059", "pages": "507"},
+      {"place": "Medina", "type": "Madaniyah", "count": 13, "title": "Al-Mumtahinah", "titleAr": "الممتحنة", "titlePs": "ازمایل شوې ښځه", "index": "060", "pages": "510"},
+      {"place": "Medina", "type": "Madaniyah", "count": 14, "title": "As-Saff", "titleAr": "الصف", "titlePs": "صفونه", "index": "061", "pages": "513"},
+      {"place": "Medina", "type": "Madaniyah", "count": 11, "title": "Al-Jumu'ah", "titleAr": "الجمعة", "titlePs": "د جمعې ورځ", "index": "062", "pages": "515"},
+      {"place": "Medina", "type": "Madaniyah", "count": 11, "title": "Al-Munafiqun", "titleAr": "المنافقون", "titlePs": "منافقان", "index": "063", "pages": "516"},
+      {"place": "Medina", "type": "Madaniyah", "count": 18, "title": "At-Taghabun", "titleAr": "التغابن", "titlePs": "تاوان او ګټه", "index": "064", "pages": "518"},
+      {"place": "Medina", "type": "Madaniyah", "count": 12, "title": "At-Talaq", "titleAr": "الطلاق", "titlePs": "طلاق", "index": "065", "pages": "520"},
+      {"place": "Medina", "type": "Madaniyah", "count": 12, "title": "At-Tahrim", "titleAr": "التحريم", "titlePs": "حرامول", "index": "066", "pages": "522"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 30, "title": "Al-Mulk", "titleAr": "الملك", "titlePs": "پاچاهي او واکمني", "index": "067", "pages": "524"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 52, "title": "Al-Qalam", "titleAr": "القلم", "titlePs": "قلم", "index": "068", "pages": "526"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 52, "title": "Al-Haqqah", "titleAr": "الحاقة", "titlePs": "حق رښتینی قیامت", "index": "069", "pages": "529"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 44, "title": "Al-Ma'arij", "titleAr": "المعارج", "titlePs": "د ختو لارې", "index": "070", "pages": "531"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 28, "title": "Nuh", "titleAr": "نوح", "titlePs": "نوح عليه السلام", "index": "071", "pages": "533"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 28, "title": "Al-Jinn", "titleAr": "الجن", "titlePs": "پیریان (پېریان)", "index": "072", "pages": "534"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 20, "title": "Al-Muzzammil", "titleAr": "المزمل", "titlePs": "څادر اغوستونکی", "index": "073", "pages": "537"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 56, "title": "Al-Muddaththir", "titleAr": "المدثر", "titlePs": "جامې اغوستونکی", "index": "074", "pages": "538"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 40, "title": "Al-Qiyamah", "titleAr": "القيامة", "titlePs": "د قیامت ورځ", "index": "075", "pages": "540"},
+      {"place": "Medina", "type": "Madaniyah", "count": 31, "title": "Al-Insan", "titleAr": "الإنسان", "titlePs": "انسان", "index": "076", "pages": "542"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 50, "title": "Al-Mursalat", "titleAr": "المرسلات", "titlePs": "لېږل شوي بادونه", "index": "077", "pages": "544"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 40, "title": "An-Naba", "titleAr": "النبأ", "titlePs": "لوی خبر", "index": "078", "pages": "545"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 46, "title": "An-Naziat", "titleAr": "النازعات", "titlePs": "روح اخیستونکي", "index": "079", "pages": "547"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 42, "title": "Abasa", "titleAr": "عبس", "titlePs": "تندی تریو کړ", "index": "080", "pages": "548"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 29, "title": "At-Takwir", "titleAr": "التكوير", "titlePs": "تکړه نغښتل", "index": "081", "pages": "550"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 19, "title": "Al-Infitar", "titleAr": "الإنفطار", "titlePs": "څېرې کېدل", "index": "082", "pages": "551"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 36, "title": "Al-Mutaffifin", "titleAr": "المطففين", "titlePs": "په مچ کې غلا کوونکي", "index": "083", "pages": "552"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 25, "title": "Al-Inshiqaq", "titleAr": "الإنشقاق", "titlePs": "چاودېدل", "index": "084", "pages": "553"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 22, "title": "Al-Buruj", "titleAr": "البروج", "titlePs": "د ستورو برجونه", "index": "085", "pages": "554"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 17, "title": "At-Tariq", "titleAr": "الطارق", "titlePs": "د شپې څرګندېدونکی ستوری", "index": "086", "pages": "555"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 19, "title": "Al-Ala", "titleAr": "الأعلى", "titlePs": "ډېر لوړ ذات", "index": "087", "pages": "556"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 26, "title": "Al-Ghashiyah", "titleAr": "الغاشية", "titlePs": "پټوونکې پېښه (قیامت)", "index": "088", "pages": "556"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 30, "title": "Al-Fajr", "titleAr": "الفجر", "titlePs": "د سهار سپېده داغ", "index": "089", "pages": "557"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 20, "title": "Al-Balad", "titleAr": "البلد", "titlePs": "ښار (مکه مکرمه)", "index": "090", "pages": "559"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 15, "title": "Ash-Shams", "titleAr": "الشمس", "titlePs": "لمر", "index": "091", "pages": "559"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 21, "title": "Al-Lail", "titleAr": "الليل", "titlePs": "شپه", "index": "092", "pages": "560"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 11, "title": "Ad-Duha", "titleAr": "الضحى", "titlePs": "د څاښت وخت", "index": "093", "pages": "561"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 8, "title": "Ash-Sharh", "titleAr": "الشرح", "titlePs": "د سینې پرانیستل", "index": "094", "pages": "561"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 8, "title": "At-Tin", "titleAr": "التين", "titlePs": "انځر", "index": "095", "pages": "562"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 19, "title": "Al-Alaq", "titleAr": "العلق", "titlePs": "د وینې ټوټه", "index": "096", "pages": "562"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 5, "title": "Al-Qadr", "titleAr": "القدر", "titlePs": "د قدر شپه", "index": "097", "pages": "563"},
+      {"place": "Medina", "type": "Madaniyah", "count": 8, "title": "Al-Bayinah", "titleAr": "البينة", "titlePs": "روښانه دلیل", "index": "098", "pages": "563"},
+      {"place": "Medina", "type": "Madaniyah", "count": 8, "title": "Az-Zalzalah", "titleAr": "الزلزلة", "titlePs": "زلزله (ښورېدل)", "index": "099", "pages": "564"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 11, "title": "Al-Adiyat", "titleAr": "العاديات", "titlePs": "ځغاسته کوونکي آسونه", "index": "100", "pages": "564"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 11, "title": "Al-Qariah", "titleAr": "القارعة", "titlePs": "ډاروونکې پېښه", "index": "101", "pages": "565"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 8, "title": "Al-Takathur", "titleAr": "التكاثر", "titlePs": "د ډېرښت سیالي", "index": "102", "pages": "565"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 3, "title": "Al-Asr", "titleAr": "العصر", "titlePs": "زمانه او وخت", "index": "103", "pages": "566"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 9, "title": "Al-Humazah", "titleAr": "الهمزة", "titlePs": "عیب لټوونکی", "index": "104", "pages": "566"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 5, "title": "Al-Fil", "titleAr": "الفيل", "titlePs": "فیل", "index": "105", "pages": "566"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 4, "title": "Quraish", "titleAr": "قريش", "titlePs": "قریش", "index": "106", "pages": "567"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 7, "title": "Al-Ma'un", "titleAr": "الماعون", "titlePs": "د کور کوچني وسایل", "index": "107", "pages": "567"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 3, "title": "Al-Kauthar", "titleAr": "الكوثر", "titlePs": "د کوثر حوض", "index": "108", "pages": "567"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 6, "title": "Al-Kafirun", "titleAr": "الكافرون", "titlePs": "کافران", "index": "109", "pages": "568"},
+      {"place": "Medina", "type": "Madaniyah", "count": 3, "title": "An-Nasr", "titleAr": "النصر", "titlePs": "د الله مرسته او فتح", "index": "110", "pages": "568"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 5, "title": "Al-Masad", "titleAr": "المسد", "titlePs": "د کجورو پړی", "index": "111", "pages": "568"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 4, "title": "Al-Ikhlas", "titleAr": "الإخلاص", "titlePs": "اخلاص (توحید)", "index": "112", "pages": "569"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 5, "title": "Al-Falaq", "titleAr": "الفلق", "titlePs": "سپېده داغ", "index": "113", "pages": "569"},
+      {"place": "Mecca", "type": "Makkiyah", "count": 6, "title": "An-Nas", "titleAr": "الناس", "titlePs": "انسانان", "index": "114", "pages": "569"},
+    ];
+
+    return rawData.map((map) => Surah.fromJson(map)).toList();
+  }
+
+  List<Surah> get _filteredSurahs {
+    return _surahs.where((surah) {
+      final matchesFilter = _selectedFilter == 'ټول' ||
+          (_selectedFilter == 'مکي' && surah.revelationType == 'مکي') ||
+          (_selectedFilter == 'مدني' && surah.revelationType == 'مدني');
+
+      final query = _searchQuery.trim().toLowerCase();
+      final matchesSearch = query.isEmpty ||
+          surah.arabicName.contains(query) ||
+          surah.englishName.toLowerCase().contains(query) ||
+          surah.pashtoName.contains(query) ||
+          surah.pashtoMeaning.contains(query) ||
+          surah.number.toString() == query;
+
+      return matchesFilter && matchesSearch;
+    }).toList();
+  }
+
+  void _navigateToSurahDetail(BuildContext context, Surah surah) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => SurahDetailScreen(surah: surah),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      // AppBar with title 'قرآن کریم - پښتو ترجمه' & Search toggle
+      appBar: AppBar(
+        title: _isAppBarSearching
+            ? TextField(
+                controller: _searchController,
+                autofocus: true,
+                style: const TextStyle(
+                  color: Color(0xFF1B5E20),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+                decoration: InputDecoration(
+                  hintText: 'د سورت نوم یا شمېره ولټوئ...',
+                  hintStyle: const TextStyle(
+                    color: Color(0xFF9CA3AF),
+                    fontSize: 14,
+                  ),
+                  border: InputBorder.none,
+                  prefixIcon: const Icon(
+                    Icons.search_rounded,
+                    color: Color(0xFF2E7D32),
+                    size: 22,
+                  ),
+                  suffixIcon: _searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear_rounded, size: 20),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() {
+                              _searchQuery = '';
+                            });
+                          },
+                        )
+                      : null,
+                ),
+                onChanged: (val) {
+                  setState(() {
+                    _searchQuery = val;
+                  });
+                },
+              )
+            : const Text('قرآن کریم - پښتو ترجمه'),
+        leading: _isAppBarSearching
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back_rounded),
+                onPressed: () {
+                  setState(() {
+                    _isAppBarSearching = false;
+                    _searchController.clear();
+                    _searchQuery = '';
+                  });
+                },
+              )
+            : null,
+        actions: [
+          if (!_isAppBarSearching) ...[
+            IconButton(
+              icon: const Icon(Icons.search_rounded),
+              tooltip: 'د سورتونو پلټنه (Search)',
+              onPressed: () {
+                setState(() {
+                  _isAppBarSearching = true;
+                });
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.refresh_rounded),
+              tooltip: 'بیا لوډول (Reload)',
+              onPressed: _loadSurahs,
+            ),
+          ],
+        ],
+      ),
+
+      body: SafeArea(
+        child: _isLoading
+            ? const Center(
+                child: CircularProgressIndicator(color: Color(0xFF2E7D32)),
+              )
+            : CustomScrollView(
+                physics: const BouncingScrollPhysics(),
+                slivers: [
+                  // Header Banner Card
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                      child: _buildBannerCard(context),
+                    ),
+                  ),
+
+                  // Top Search Bar Component above the ListView
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                      child: _buildSearchBar(),
+                    ),
+                  ),
+
+                  // Category Filter Chips (ټول, مکي, مدني)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      child: _buildFilterChips(),
+                    ),
+                  ),
+
+                  // Section Header with 114 Surahs Counter
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 10, 20, 8),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                _searchQuery.isEmpty
+                                    ? 'سورتونه (${_filteredSurahs.length})'
+                                    : 'د پلټنې پایلې (${_filteredSurahs.length})',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF1B5E20),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFE8F5E9),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  '۱۱۴ سورتونه',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF2E7D32),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const Text(
+                            'پښتو مانا او ژباړه',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFF6B7280),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  // ListView displaying 114 Surahs parsed from user's schema
+                  if (_filteredSurahs.isEmpty)
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.all(32),
+                        child: Column(
+                          children: [
+                            const Icon(Icons.search_off_rounded, size: 48, color: Color(0xFF81C784)),
+                            const SizedBox(height: 12),
+                            const Text(
+                              'هېڅ سورت ونه موندل شو',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF1B5E20),
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              '"$_searchQuery" سره سمون لرونکی سورت نشته.',
+                              style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+                            ),
+                            const SizedBox(height: 14),
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFE8F5E9),
+                                foregroundColor: const Color(0xFF1B5E20),
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() {
+                                  _searchQuery = '';
+                                });
+                              },
+                              icon: const Icon(Icons.refresh_rounded, size: 18),
+                              label: const Text('ټول ۱۱۴ سورتونه وښایه'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  else
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                      sliver: SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) {
+                            final surah = _filteredSurahs[index];
+                            return _buildSurahCard(context, surah);
+                          },
+                          childCount: _filteredSurahs.length,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+      ),
+
+      // Bottom Navigation Bar
+      bottomNavigationBar: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 16,
+              offset: const Offset(0, -4),
+            ),
+          ],
+        ),
+        child: NavigationBar(
+          selectedIndex: _selectedNavIndex,
+          onDestinationSelected: (index) {
+            setState(() {
+              _selectedNavIndex = index;
+            });
+          },
+          backgroundColor: Colors.white,
+          indicatorColor: const Color(0xFFE8F5E9),
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.menu_book_outlined, color: Color(0xFF2E7D32)),
+              selectedIcon: Icon(Icons.menu_book_rounded, color: Color(0xFF1B5E20)),
+              label: '۱۱۴ سورتونه',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.library_books_outlined, color: Color(0xFF2E7D32)),
+              selectedIcon: Icon(Icons.library_books_rounded, color: Color(0xFF1B5E20)),
+              label: '۳۰ سپارې (پاره)',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.bookmark_outline_rounded, color: Color(0xFF2E7D32)),
+              selectedIcon: Icon(Icons.bookmark_rounded, color: Color(0xFF1B5E20)),
+              label: 'نښې',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.settings_outlined, color: Color(0xFF2E7D32)),
+              selectedIcon: Icon(Icons.settings_rounded, color: Color(0xFF1B5E20)),
+              label: 'ترتیبات',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Calm green header banner card with Bismillah and Surahs count
+  Widget _buildBannerCard(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [
+            Color(0xFF2E7D32),
+            Color(0xFF1B5E20),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF1B5E20).withOpacity(0.25),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.18),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.menu_book_rounded, size: 14, color: Colors.white),
+                    SizedBox(width: 6),
+                    Text(
+                      'قرآن کریم بشپړ لړلیک',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.white,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.mosque_rounded,
+                color: Color(0xFFA5D6A7),
+                size: 26,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const Center(
+            child: Text(
+              'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 22,
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Center(
+            child: Text(
+              'ټول ${_surahs.length} سورتونه • پښتو ژباړه او مانا',
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white.withOpacity(0.9),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Top Search Bar Component above ListView
+  Widget _buildSearchBar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFC8E6C9), width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF2E7D32).withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: TextField(
+        controller: _searchController,
+        onChanged: (val) {
+          setState(() {
+            _searchQuery = val;
+          });
+        },
+        style: const TextStyle(
+          color: Color(0xFF1B5E20),
+          fontWeight: FontWeight.w500,
+        ),
+        decoration: InputDecoration(
+          hintText: 'د سورت نوم، مانا (مثلاً: غوا، خلاصونکی) يا شمېره ولټوئ...',
+          hintStyle: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 13),
+          prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF2E7D32)),
+          suffixIcon: _searchQuery.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.cancel_rounded, size: 18, color: Color(0xFF2E7D32)),
+                  onPressed: () {
+                    _searchController.clear();
+                    setState(() {
+                      _searchQuery = '';
+                    });
+                  },
+                )
+              : Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8F5E9),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text(
+                      'پلټنه',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1B5E20),
+                      ),
+                    ),
+                  ),
+                ),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        ),
+      ),
+    );
+  }
+
+  /// Filter chips for Makki/Madani categories
+  Widget _buildFilterChips() {
+    final filters = ['ټول', 'مکي', 'مدني'];
+    return Row(
+      children: filters.map((filter) {
+        final isSelected = _selectedFilter == filter;
+        return Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: ChoiceChip(
+            label: Text(filter),
+            selected: isSelected,
+            onSelected: (selected) {
+              if (selected) {
+                setState(() {
+                  _selectedFilter = filter;
+                });
+              }
+            },
+            selectedColor: const Color(0xFFE8F5E9),
+            backgroundColor: Colors.white,
+            side: BorderSide(
+              color: isSelected ? const Color(0xFF2E7D32) : const Color(0xFFE0EBE0),
+            ),
+            labelStyle: TextStyle(
+              color: isSelected ? const Color(0xFF1B5E20) : const Color(0xFF4B5563),
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              fontSize: 13,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  /// Surah Card Item in ListView with onTap navigation to SurahDetailScreen
+  Widget _buildSurahCard(BuildContext context, Surah surah) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE8EFE8)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.02),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => _navigateToSurahDetail(context, surah),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(
+              children: [
+                // Surah Number inside Islamic Star Badge
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF1F8F5),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFC8E6C9)),
+                  ),
+                  child: Center(
+                    child: Text(
+                      '${surah.number}',
+                      style: const TextStyle(
+                        color: Color(0xFF1B5E20),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 14),
+
+                // English & Pashto Names & Metadata
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            surah.englishName,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF1F2937),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // Revelation Type Badge
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: surah.revelationType == 'مکي'
+                                  ? const Color(0xFFFFF3E0)
+                                  : const Color(0xFFE8F5E9),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              surah.revelationType,
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: surah.revelationType == 'مکي'
+                                    ? const Color(0xFFE65100)
+                                    : const Color(0xFF2E7D32),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        'مانا: ${surah.pashtoMeaning} • مخ: ${surah.pages}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF4B5563),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${surah.totalVerses} آیتونه',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF9CA3AF),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Arabic Calligraphy Name & Forward Chevron
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      surah.arabicName,
+                      textDirection: TextDirection.rtl,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1B5E20),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      size: 20,
+                      color: Color(0xFF9CA3AF),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Screen: SurahDetailScreen
+/// Displays Surah with large Arabic text and Pashto translation right below
+class SurahDetailScreen extends StatefulWidget {
+  final Surah surah;
+  const SurahDetailScreen({super.key, required this.surah});
+
+  @override
+  State<SurahDetailScreen> createState() => _SurahDetailScreenState();
+}
+
+class _SurahDetailScreenState extends State<SurahDetailScreen> {
+  bool _isBookmarked = false;
+  double _fontSizeOffset = 0.0;
+  List<Ayah> _verses = [];
+  bool _isLoadingVerses = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVerses();
+  }
+
+  Future<void> _loadVerses() async {
+    // If the Surah already has verses, use them
+    if (widget.surah.verses.isNotEmpty) {
+      setState(() => _verses = widget.surah.verses);
+      return;
+    }
+
+    setState(() => _isLoadingVerses = true);
+
+    try {
+      // Fetch authentic verses + Pashto translation from Al-Quran API
+      final url = 'https://api.alquran.cloud/v1/surah/${widget.surah.number}/editions/quran-uthmani,ps.abdulwali';
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 6));
+      if (response.statusCode == 200) {
+        final data = json.decode(utf8.decode(response.bodyBytes));
+        final editions = data['data'] as List<dynamic>;
+        final arabicList = editions[0]['ayahs'] as List<dynamic>;
+        final pashtoList = editions[1]['ayahs'] as List<dynamic>;
+
+        final List<Ayah> loaded = [];
+        for (int i = 0; i < arabicList.length; i++) {
+          loaded.add(Ayah(
+            number: arabicList[i]['numberInSurah'] ?? (i + 1),
+            arabicText: arabicList[i]['text'] ?? '',
+            pashtoTranslation: pashtoList[i]['text'] ?? '',
+          ));
+        }
+
+        if (mounted) {
+          setState(() {
+            _verses = loaded;
+            _isLoadingVerses = false;
+          });
+          return;
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching verses online: $e');
+    }
+
+    // Fallback sample verses if offline
+    if (mounted) {
+      setState(() {
+        _verses = _getFallbackVerses(widget.surah.number);
+        _isLoadingVerses = false;
+      });
+    }
+  }
+
+  List<Ayah> _getFallbackVerses(int surahNum) {
+    if (surahNum == 1) {
+      return const [
+        Ayah(
+          number: 1,
+          arabicText: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ',
+          pashtoTranslation: 'د الله په نوم (شروع کوم) چې ډېر مهربان او بې کچه رحم کونکی دی.',
+          irabAnalysis: PashtoIrabAnalysis(
+            title: 'د کلماتو نحوي ترکیب او اعراب (په پښتو ژبه)',
+            words: [
+              PashtoWordAnalysis(
+                word: 'بِسْمِ',
+                analysis: '«بـ» حرف جر دی؛ او «اسمِ» د حرف جر له امله مجرور دی (او دلته مضاف واقع شوی دی).',
+              ),
+              PashtoWordAnalysis(
+                word: 'اللَّهِ',
+                analysis: 'د «الله» مبارک نوم، مضافإليه او مجرور دی (د جر نښه یې په پای کې کسره ده).',
+              ),
+              PashtoWordAnalysis(
+                word: 'الرَّحْمَٰنِ',
+                analysis: 'د «الله» لپاره لومړنی صفت (نعت) دی او تبعاً مجرور دی.',
+              ),
+              PashtoWordAnalysis(
+                word: 'الرَّحِيمِ',
+                analysis: 'د «الله» لپاره دوهم صفت (نعت) دی او هغه هم مجرور دی.',
+              ),
+            ],
+            sentenceNote: 'ترکیبي نکته: شبه جمله (جار او مجرور یعنی «بسم») یو محذوف فعل ته متعلق دی چې تقدیر یې (أبتدئُ یعنی پیل کوم یا استعينُ یعنی مرسته غواړم) دی.',
+          ),
+        ),
+        Ayah(
+          number: 2,
+          arabicText: 'الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ',
+          pashtoTranslation: 'ټول (د كمال) صفتونه خاص د الله لپاره دي چې د ټولو عالَمونو ښه پالونكى دى',
+          irabAnalysis: PashtoIrabAnalysis(
+            title: 'د کلماتو نحوي ترکیب او اعراب (په پښتو ژبه)',
+            words: [
+              PashtoWordAnalysis(
+                word: 'الْحَمْدُ',
+                analysis: 'مبتدأ او مرفوع دی (د رفع علامه یې په پای کې ضمه/پېښ ده).',
+              ),
+              PashtoWordAnalysis(
+                word: 'لِلَّهِ',
+                analysis: '«لام» حرف جر دی او د «الله» مبارک نوم مجرور دی؛ جار او مجرور د خبر متعلق دي.',
+              ),
+              PashtoWordAnalysis(
+                word: 'رَبِّ',
+                analysis: 'د «الله» لپاره نعت (صفت) دی او مجرور دی، او خپله مضاف دی.',
+              ),
+              PashtoWordAnalysis(
+                word: 'الْعَالَمِينَ',
+                analysis: 'مضاف الیه او مجرور دی (د جر علامه یې «یاء» ده ځکه چې جمع مذكر سالم دی).',
+              ),
+            ],
+            sentenceNote: 'ترکیبي نکته: جمله اسمیه ده، الحمد مبتدأ او «لله» جار او مجرور شبه جمله خبر ده.',
+          ),
+        ),
+        Ayah(number: 3, arabicText: 'الرَّحْمَٰنِ الرَّحِيمِ', pashtoTranslation: 'ډېر زیات مهربان، بې حده رحم كوونكى دى'),
+        Ayah(number: 4, arabicText: 'مَالِكِ يَوْمِ الدِّينِ', pashtoTranslation: 'د بَدلې د ورځې مالك دى'),
+        Ayah(number: 5, arabicText: 'إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ', pashtoTranslation: 'مونږ خاص ستا عبادت كوو او خاص له تا نه مدد غواړو'),
+        Ayah(number: 6, arabicText: 'اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ', pashtoTranslation: 'ته مونږ ته سَمَه (نېغه) لاره وښَیَه'),
+        Ayah(number: 7, arabicText: 'صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ غَيْرِ الْمَغْضُوبِ عَلَيْهِمْ وَلَا الضَّالِّينَ', pashtoTranslation: 'د هغو خلقو لاره چې تا پر هغوى باندې انعام كړى دى؛ چې نه پر هغوى باندې غضب شوى او نه ګمراهان دي'),
+      ];
+    } else if (surahNum == 2) {
+      return const [
+        Ayah(number: 1, arabicText: 'الـم', pashtoTranslation: 'الف، لام، ميم'),
+        Ayah(number: 2, arabicText: 'ذَٰلِكَ الْكِتَابُ لَا رَيْبَ ۛ فِيهِ ۛ هُدًى لِّلْمُتَّقِينَ', pashtoTranslation: 'دا (عظیم) كتاب دی، په ده كې هیڅ شك نشته، د پرهېزګارانو لپاره هدایت دى'),
+        Ayah(number: 3, arabicText: 'الَّذِينَ يُؤْمِنُونَ بِالْغَيْبِ وَيُقِيمُونَ الصَّلَاةَ وَمِمَّا رَزَقْنَاهُمْ يُنفِقُونَ', pashtoTranslation: 'هغه كسان چې په غیبو ایمان راوړي او لمونځ قائموي او له هغه څه نه چې مونږ دوى ته روزي وركړې ده، څه برخه لګوي'),
+        Ayah(number: 4, arabicText: 'وَالَّذِينَ يُؤْمِنُونَ بِمَا أُنزِلَ إِلَيْكَ وَمَا أُنزِلَ مِن قَبْلِكَ وَبِالْآخِرَةِ هُمْ يُوقِنُونَ', pashtoTranslation: 'او هغه كسان چې پر هغه (كتاب) ایمان راوړي چې تا ته نازل كړى شوى دى او پر هغه څه چې له تا نه مخكې نازل كړى شوي دي او په اخرت دوى پوره یقین لري'),
+        Ayah(number: 5, arabicText: 'أُولَٰئِكَ عَلَىٰ هُدًى مِّن رَّبِّهِمْ ۖ وَأُولَٰئِكَ هُمُ الْمُفْلِحُونَ', pashtoTranslation: 'دغه كسان د خپل رب له جانبه پر هدایت دي او هم دغه كسان كامیاب دي'),
+      ];
+    } else if (surahNum == 112) {
+      return const [
+        Ayah(number: 1, arabicText: 'قُلْ هُوَ اللَّهُ أَحَدٌ', pashtoTranslation: '(اى نبي!) ته (دوى ته) ووایه: شان دا دى چی الله یو دى'),
+        Ayah(number: 2, arabicText: 'اللَّهُ الصَّمَدُ', pashtoTranslation: 'هم دا الله بې نیاز (بې حاجته) دى'),
+        Ayah(number: 3, arabicText: 'لَمْ يَلِدْ وَلَمْ يُولَدْ', pashtoTranslation: 'نه يې (څوك) زېږولى دى او نه دى (له چا) زېږول شوى دى'),
+        Ayah(number: 4, arabicText: 'وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ', pashtoTranslation: 'او د ده هیڅوك سیال (او) برابر نشته'),
+      ];
+    } else if (surahNum == 113) {
+      return const [
+        Ayah(number: 1, arabicText: 'قُلْ أَعُوذُ بِرَبِّ الْفَلَقِ', pashtoTranslation: '(اى نبي) ته ووایه: زه په رب د سبا پورې پناه نيسم'),
+        Ayah(number: 2, arabicText: 'مِن شَرِّ مَا خَلَقَ', pashtoTranslation: 'د هر هغه شي له شر نه چې ده پیدا كړى دى'),
+        Ayah(number: 3, arabicText: 'وَمِن شَرِّ غَاسِقٍ إِذَا وَقَبَ', pashtoTranslation: 'او د تیارې شپې له شر نه كله چې تكه توره (او خوره) شي'),
+        Ayah(number: 4, arabicText: 'وَمِن شَرِّ النَّفَّاثَاتِ فِي الْعُقَدِ', pashtoTranslation: 'او له شره د هغو (جادوګرو) ښځو چې په غوټو كې پوكي وهونكې دي'),
+        Ayah(number: 5, arabicText: 'وَمِن شَرِّ حَاسِدٍ إِذَا حَسَدَ', pashtoTranslation: 'او د حسد كوونكي له شر نه كله چی دى حسد (شروع او ښكاره) كړي'),
+      ];
+    } else if (surahNum == 114) {
+      return const [
+        Ayah(number: 1, arabicText: 'قُلْ أَعُوذُ بِرَبِّ النَّاسِ', pashtoTranslation: '(اى نبي) ته ووایه: زه د خلقو په رب پورې پناه نیسم'),
+        Ayah(number: 2, arabicText: 'مَلِكِ النَّاسِ', pashtoTranslation: 'چې د خلقو بادشاه دى'),
+        Ayah(number: 3, arabicText: 'إِلَٰهِ النَّاسِ', pashtoTranslation: 'د خلقو (حقیقي) معبود دى'),
+        Ayah(number: 4, arabicText: 'مِن شَرِّ الْوَسْوَاسِ الْخَنَّاسِ', pashtoTranslation: 'له شره د وسوسې اچوونكي، تښتېدونكي'),
+        Ayah(number: 5, arabicText: 'الَّذِي يُوَسْوِسُ فِي صُدُورِ النَّاسِ', pashtoTranslation: 'هغه چې د خلقو په سینو كې وسوسې اچوي'),
+        Ayah(number: 6, arabicText: 'مِنَ الْجِنَّةِ وَالنَّاسِ', pashtoTranslation: 'چی (دغه وسوسې اچوونكي) له پېریانو او انسانانو ځنې دي'),
+      ];
+    }
+    return [
+      const Ayah(number: 1, arabicText: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ', pashtoTranslation: 'د الله په نامه سره (شروع كوم) چې ډېر زیات مهربان، بې حده رحم كوونكى دى'),
+      const Ayah(number: 2, arabicText: 'إِنَّ هَٰذَا الْقُرْآنَ يَهْدِي لِلَّتِي هِيَ أَقْوَمُ', pashtoTranslation: 'بېشكه دا قرآن هغې لارې ته نېغه لارښوونه كوي چې هغه تر ټولو سمه او نېغه ده'),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF7FAF7),
+      appBar: AppBar(
+        title: Text(widget.surah.pashtoName),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () => Navigator.pop(context),
+          tooltip: 'بېرته (Back)',
+        ),
+        actions: [
+          IconButton(
+            icon: Icon(
+              _isBookmarked ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
+              color: const Color(0xFF1B5E20),
+            ),
+            tooltip: 'نښه کول',
+            onPressed: () {
+              setState(() {
+                _isBookmarked = !_isBookmarked;
+              });
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(_isBookmarked ? 'سورت په نښو کې وساتل شو' : 'سورت له نښو لرې شو'),
+                  behavior: SnackBarBehavior.floating,
+                  duration: const Duration(seconds: 1),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.share_outlined),
+            tooltip: 'شریکول',
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('د ${widget.surah.pashtoName} معلومات کاپي شول'),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Educational Header Banner for the Surah
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [
+                    Color(0xFF2E7D32),
+                    Color(0xFF1B5E20),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(18),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF1B5E20).withOpacity(0.18),
+                    blurRadius: 14,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.16),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          '${widget.surah.revelationType} (${widget.surah.place}) • ${widget.surah.totalVerses} آیتونه',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        'مخ: ${widget.surah.pages}',
+                        style: const TextStyle(
+                          color: Color(0xFFA5D6A7),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    widget.surah.arabicName,
+                    style: const TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'پښتو مانا: ${widget.surah.pashtoMeaning} • ${widget.surah.englishName}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withOpacity(0.9),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Controls Bar: Font size adjustment and Verse count label
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'د آیتونو لړلیک (${_verses.length} آیتونه)',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1B5E20),
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.text_decrease_rounded, size: 18),
+                        onPressed: () {
+                          if (_fontSizeOffset > -4) {
+                            setState(() => _fontSizeOffset -= 2);
+                          }
+                        },
+                        tooltip: 'د فونټ کوچني کول',
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.text_increase_rounded, size: 18),
+                        onPressed: () {
+                          if (_fontSizeOffset < 8) {
+                            setState(() => _fontSizeOffset += 2);
+                          }
+                        },
+                        tooltip: 'د فونټ لوی کول',
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            // Verses List: Arabic text in large font + Pashto translation right below
+            Expanded(
+              child: _isLoadingVerses
+                  ? const Center(
+                      child: CircularProgressIndicator(color: Color(0xFF2E7D32)),
+                    )
+                  : ListView.separated(
+                      physics: const BouncingScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
+                      itemCount: _verses.length,
+                      separatorBuilder: (context, index) => const SizedBox(height: 14),
+                      itemBuilder: (context, index) {
+                        final ayah = _verses[index];
+                        return Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: const Color(0xFFE8EFE8)),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.02),
+                                blurRadius: 8,
+                                offset: const Offset(0, 3),
+                              ),
+                            ],
+                          ),
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              // Verse Number Header
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFE8F5E9),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      'آیت ${ayah.number}',
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                        color: Color(0xFF1B5E20),
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.play_circle_outline_rounded,
+                                      color: Color(0xFF2E7D32),
+                                      size: 22,
+                                    ),
+                                    tooltip: 'تلاوت واورئ',
+                                    onPressed: () {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('د ${ayah.number} نمبر آیت تلاوت روان شو'),
+                                          behavior: SnackBarBehavior.floating,
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+
+                              // 1. Large, readable Arabic Text
+                              Text(
+                                ayah.arabicText,
+                                textDirection: TextDirection.rtl,
+                                textAlign: TextAlign.right,
+                                style: TextStyle(
+                                  fontSize: 22 + _fontSizeOffset,
+                                  fontWeight: FontWeight.bold,
+                                  color: const Color(0xFF1F2937),
+                                  height: 1.9,
+                                  letterSpacing: 0.3,
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+
+                               // 2. Pashto Translation right below in smaller font
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF9FBF9),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: const Color(0xFFE8EFE8)),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Row(
+                                      children: [
+                                        Icon(Icons.translate_rounded, size: 14, color: Color(0xFF2E7D32)),
+                                        SizedBox(width: 6),
+                                        Text(
+                                          'پښتو ترجمه:',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                            color: Color(0xFF2E7D32),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      ayah.pashtoTranslation,
+                                      textDirection: TextDirection.rtl,
+                                      textAlign: TextAlign.right,
+                                      style: TextStyle(
+                                        fontSize: 14 + (_fontSizeOffset * 0.5),
+                                        color: const Color(0xFF374151),
+                                        height: 1.6,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+
+                              // 3. Pashto I'rab & Grammatical Analysis Button
+                              Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(12),
+                                  onTap: () => _showIrabBottomSheet(context, ayah),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFE8F5E9),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: const Color(0xFFC8E6C9)),
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            const Icon(Icons.auto_stories_rounded, size: 16, color: Color(0xFF1B5E20)),
+                                            const SizedBox(width: 8),
+                                            const Text(
+                                              'د کلماتو نحوي ترکیب او اعراب (I'rab)',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.bold,
+                                                color: Color(0xFF1B5E20),
+                                              ),
+                                            ),
+                                            final irabData = ayah.irabAnalysis ?? _builtInIrab['${widget.surah.number}:${ayah.number}'];
+                                            if (irabData != null) ...[
+                                              const SizedBox(width: 6),
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                                                decoration: BoxDecoration(
+                                                  color: const Color(0xFF2E7D32),
+                                                  borderRadius: BorderRadius.circular(6),
+                                                ),
+                                                child: Text(
+                                                  '${irabData.words.length} کلمې',
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 10,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                        const Icon(Icons.chevron_left_rounded, size: 18, color: Color(0xFF1B5E20)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static const Map<String, PashtoIrabAnalysis> _builtInIrab = {
+    '1:1': PashtoIrabAnalysis(
+      title: 'د کلماتو نحوي ترکیب او اعراب (په پښتو ژبه)',
+      words: [
+        PashtoWordAnalysis(word: 'بِسْمِ', analysis: '«بـ» حرف جر دی؛ او «اسمِ» د حرف جر له امله مجرور دی (او دلته مضاف واقع شوی دی).'),
+        PashtoWordAnalysis(word: 'اللَّهِ', analysis: 'د «الله» مبارک نوم، مضافإليه او مجرور دی (د جر نښه یې په پای کې کسره ده).'),
+        PashtoWordAnalysis(word: 'الرَّحْمَٰنِ', analysis: 'د «الله» لپاره لومړنی صفت (نعت) دی او تبعاً مجرور دی.'),
+        PashtoWordAnalysis(word: 'الرَّحِيمِ', analysis: 'د «الله» لپاره دوهم صفت (نعت) دی او هغه هم مجرور دی.'),
+      ],
+      sentenceNote: 'ترکیبي نکته: شبه جمله (جار او مجرور یعنی «بسم») یو محذوف فعل ته متعلق دی چې تقدیر یې (أبتدئُ یعنی پیل کوم یا استعينُ یعنی مرسته غواړم) دی.',
+    ),
+    '78:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "عَمَّ", analysis: "«عن» حرف جر دی او «ما» استفهامیه ده (الف آن د حذف په توګه لوېدلې ده)، جار او مجرور دي."),
+        PashtoWordAnalysis(word: "یَتَسَاءَلُونَ", analysis: "فعل مضارع دی، واو ضمیر د فاعل په توګه مرفوع دی، او جمله استفهامیه ده."),
+      ],
+      sentenceNote: "",
+    ),
+    '79:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "وَالنَّازِعَاتِ", analysis: "«واو» د قسم لپاره حرف جر دی، «النازعات» مجرور اسم دی (علامت یې کسره ده ځکه جمع مؤنث سالم دی)."),
+        PashtoWordAnalysis(word: "غَرْقًا", analysis: "مفعول مطلق دی (او یا حال دی)، منصوب دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '80:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "عَبَسَ", analysis: "فعل ماضی دی، فاعل یې مستتر (پټ) ضمير دی چې «هو» ته راجع کېږي، مبنی بر فتح دی."),
+        PashtoWordAnalysis(word: "وَتَوَلَّىٰ", analysis: "«واو» حرف عطف دی، «تولى» فعل ماضی معتل دی، فاعل یې مستتر ضمیر دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '81:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "إِذَا", analysis: "ظرف دی د مستقبل (راتلونکي) زمانې لپاره چې د شرط په معنی کې دی."),
+        PashtoWordAnalysis(word: "الشَّمْسُ", analysis: "فاعل دی د فعل محذوف لپاره (په مفسر فعل پسې)، یا مبتدا ده (او فعل یې خبر دی)."),
+        PashtoWordAnalysis(word: "کُوِّرَتْ", analysis: "فعل ماضی مجهول دی، «ت» د مؤنث علامه ده، نائب فاعل یې مستتر ضمیر دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '82:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "إِذَا", analysis: "ظرف زمان متضمن معنی شرط دی."),
+        PashtoWordAnalysis(word: "السَّمَاءُ", analysis: "فاعل دی د فعل محذوف لپاره (پنج فاعل مفسر)."),
+        PashtoWordAnalysis(word: "انْفَطَرَتْ", analysis: "فعل ماضی دی، «ت» د مؤنث نښه ده، فاعل یې مستتر دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '83:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "وَيْلٌ", analysis: "مبتدا مرفوع دی (یا مصدر دی د فعل محذوف لپاره)."),
+        PashtoWordAnalysis(word: "لِلْمُطَفِّفِينَ", analysis: "«ل» حرف جر دی، «المطففين» مجرور دی (علامت یې «ی» ده ځکه جمع مذکر سالم دی)، جار او مجرور خبر دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '84:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "إِذَا", analysis: "ظرف زمان متضمن معنی شرط."),
+        PashtoWordAnalysis(word: "السَّمَاءُ", analysis: "فاعل دی د محذوف فعل لپاره."),
+        PashtoWordAnalysis(word: "انْشَقَّتْ", analysis: "فعل ماضی دی، د مؤنث «ت» لری، فاعل یې مستتر دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '85:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "وَالسَّمَاءِ", analysis: "«واو» د قسم حرف جر دی، «السماء» مجرور اسم دی."),
+        PashtoWordAnalysis(word: "ذَاتِ", analysis: "صفت دی د آسمان لپاره او مجرور دی، مضاف هم دی."),
+        PashtoWordAnalysis(word: "الْبُرُوجِ", analysis: "مضافإليه او مجرور دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '86:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "وَالسَّمَاءِ", analysis: "«واو» حرف قسم و جر، «السماء» مجرور دی."),
+        PashtoWordAnalysis(word: "وَالطَّارِقِ", analysis: "«واو» عطف دی، «الطارق» معطوف دی پر «السماء» او مجرور دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '87:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "سَبِّحِ", analysis: "فعل امر دی، فاعل یې مستتر ضمیر دی (انت)، د التقاء ساکنین لپاره کسر ورکړل شوی."),
+        PashtoWordAnalysis(word: "اسْمَ", analysis: "مفعول به و منصوب دی، مضاف دی."),
+        PashtoWordAnalysis(word: "رَبِّكَ", analysis: "مضافإليه او مجرور دی، «ک» ضمیر مضافإليه په محل جر کې دی."),
+        PashtoWordAnalysis(word: "الْأَعْلَى", analysis: "صفت دی د رب لپاره او مجرور دی (با فتحه مقدرة)."),
+      ],
+      sentenceNote: "",
+    ),
+    '88:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "هَلْ", analysis: "حرف استفهام دی (لا محل له الإعراب)."),
+        PashtoWordAnalysis(word: "أَتَاكَ", analysis: "فعل ماضی دی، «ک» ضمیر متصل مفعول به دی (مقدم دی)."),
+        PashtoWordAnalysis(word: "حَدِيثُ", analysis: "فاعل مرفوع دی (مؤخر دی)، مضاف دی."),
+        PashtoWordAnalysis(word: "الْغَاشِيَةِ", analysis: "مضافإليه او مجرور دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '89:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "وَالْفَجْرِ", analysis: "«واو» د قسم حرف جر دی، «الفجر» مجرور دی (او متعلق به فعل محذوف أقسم دی)."),
+      ],
+      sentenceNote: "",
+    ),
+    '90:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "لَا", analysis: "حرف نفی دی (یا زائد د تاکید لپاره)."),
+        PashtoWordAnalysis(word: "أُقْسِمُ", analysis: "فعل مضارع دی، فاعل یې مستتر ضمیر (أنا) دی."),
+        PashtoWordAnalysis(word: "بِهَذَا", analysis: "«ب» حرف جر، «هذا» اسم اشاره په محل جر کې دی."),
+        PashtoWordAnalysis(word: "الْبَلَدِ", analysis: "بدل دی له اسم اشارې څخه او مجرور دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '91:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "وَالشَّمْسِ", analysis: "«واو» حرف قسم و جر، «الشمس» مجرور دی."),
+        PashtoWordAnalysis(word: "وَضُحَاهَا", analysis: "«واو» عطف دی، «ضحی» معطوف دی او مضاف دی، «ها» ضمیر مضافإليه دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '92:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "وَاللَّیْلِ", analysis: "«واو» حرف قسم و جر، «اللیل» مجرور دی."),
+        PashtoWordAnalysis(word: "إِذَا", analysis: "ظرف زمان دی."),
+        PashtoWordAnalysis(word: "يَغْشَى", analysis: "فعل مضارع معتل دی، فاعل یې مستتر دی، جمله مضافإليه ده."),
+      ],
+      sentenceNote: "",
+    ),
+    '93:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "وَالضُّحَى", analysis: "«واو» حرف قسم و جر، «الضحى» مجرور دی (با کسرة مقدرة)."),
+      ],
+      sentenceNote: "",
+    ),
+    '94:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "أَلَمْ", analysis: "«همزه» د استفهام ده، «لم» حرف جازم دی."),
+        PashtoWordAnalysis(word: "نَشْرَحْ", analysis: "فعل مضارع مجزوم دی (د لم په وجه)، فاعل یې (نحن) مستتر دی."),
+        PashtoWordAnalysis(word: "لَكَ", analysis: "«ل» حرف جر، «ک» ضمیر مجرور دی، جار و مجرور متعلق به نشرح دی."),
+        PashtoWordAnalysis(word: "صَدْرَكَ", analysis: "مفعول به و منصوب دی، مضاف دی، «ک» ضمیر مضافإليه دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '95:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "وَالتِّینِ", analysis: "«واو» حرف قسم و جر، «التین» مجرور دی."),
+        PashtoWordAnalysis(word: "وَالزَّیْتُونِ", analysis: "«واو» عطف دی، «الزيتون» معطوف دی او مجرور دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '96:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "اقْرَأْ", analysis: "فعل امر دی، فاعل یې مستتر ضمیر (انت) دی."),
+        PashtoWordAnalysis(word: "بِاسْمِ", analysis: "«ب» حرف جر، «اسم» مجرور دی، مضاف دی."),
+        PashtoWordAnalysis(word: "رَبِّكَ", analysis: "مضافإليه او مجرور دی، «ک» ضمیر مضافإليه دی."),
+        PashtoWordAnalysis(word: "الَّذِي", analysis: "اسم موصول په محل جر کې صفت دی (یا بدل دی)."),
+        PashtoWordAnalysis(word: "خَلَقَ", analysis: "فعل ماضی دی، فاعل یې مستتر دی، صلة الموصول دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '97:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "إِنَّا", analysis: "«إن» حرف مشبه بالفعل دی، «نا» ضمیر اسم د إن دی."),
+        PashtoWordAnalysis(word: "أَنْزَلْنَاهُ", analysis: "«أنزلنا» فعل ماضی او فاعل (نا) دی، «ه» ضمیر مفعول به دی، جمله خبر د إن دی."),
+        PashtoWordAnalysis(word: "فِي", analysis: "حرف جر دی."),
+        PashtoWordAnalysis(word: "لَیْلَةِ", analysis: "مجرور دی، مضاف دی."),
+        PashtoWordAnalysis(word: "الْقَدْرِ", analysis: "مضافإليه او مجرور دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '98:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "لَمْ", analysis: "حرف جازم دی."),
+        PashtoWordAnalysis(word: "يَكُنِ", analysis: "فعل مضارع ناقص مجزوم دی (د التقاء ساکنین لپاره کسره ورکړل شوې)."),
+        PashtoWordAnalysis(word: "الَّذِينَ", analysis: "اسم موصول دی په محل رفع کې نوم د يکن دی."),
+        PashtoWordAnalysis(word: "كَفَرُوا", analysis: "فعل ماضی او واو فاعل دی، صلة الموصول دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '99:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "إِذَا", analysis: "ظرف زمان متضمن معنی شرط دی."),
+        PashtoWordAnalysis(word: "زُلْزِلَتِ", analysis: "فعل ماضی مجهول دی، «ت» د مؤنث نښه ده."),
+        PashtoWordAnalysis(word: "الْأَرْضُ", analysis: "نائب فاعل مرفوع دی."),
+        PashtoWordAnalysis(word: "زِلْزَالَهَا", analysis: "مفعول مطلق دی، مضاف دی، «ها» ضمیر مضافإليه دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '100:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "وَالْعَادِيَاتِ", analysis: "«واو» حرف قسم و جر، «العاديات» مجرور دی (علامت یې کسره ده ځکه جمع مؤنث سالم دی)."),
+        PashtoWordAnalysis(word: "ضَبْحًا", analysis: "مفعول مطلق دی (یا حال دی) او منصوب دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '101:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "الْقَارِعَةُ", analysis: "مبتدا مرفوع دی (او خبر یې لاندې آیا ده: ما القارعة)."),
+      ],
+      sentenceNote: "",
+    ),
+    '102:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "أَلْهَاكُمُ", analysis: "فعل ماضی دی، «کُم» ضمیر مفعول به دی (مقدم دی)."),
+        PashtoWordAnalysis(word: "التَّكاثُرُ", analysis: "فاعل مرفوع دی (مؤخر دی)."),
+      ],
+      sentenceNote: "",
+    ),
+    '103:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "وَالْعَصْرِ", analysis: "«واو» حرف قسم و جر، «العصر» مجرور دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '104:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "وَيْلٌ", analysis: "مبتدا مرفوع دی."),
+        PashtoWordAnalysis(word: "لِكُلِّ", analysis: "جار و مجرور خبر دی، مضاف دی."),
+        PashtoWordAnalysis(word: "هُمَزَةٍ", analysis: "مضافإليه او مجرور دی."),
+        PashtoWordAnalysis(word: "لُمَزَةٍ", analysis: "دوهم صفت یا بدل دی او مجرور دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '105:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "أَلَمْ", analysis: "همزه استفهام او لم جازم دی."),
+        PashtoWordAnalysis(word: "تَرَ", analysis: "فعل مضارع مجزوم دی (حرف عله یې حذف شوی)، فاعل مستتر (انت) دی."),
+        PashtoWordAnalysis(word: "كَيْفَ", analysis: "اسم استفهام دی په محل نصب کې حال دی."),
+        PashtoWordAnalysis(word: "فَعَلَ", analysis: "فعل ماضی دی."),
+        PashtoWordAnalysis(word: "رَبُّكَ", analysis: "فاعل مرفوع دی، مضاف دی، «ک» مضافإليه دی."),
+        PashtoWordAnalysis(word: "بِأَصْحَابِ", analysis: "جار و مجرور دی."),
+        PashtoWordAnalysis(word: "الْفِيلِ", analysis: "مضافإليه او مجرور دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '106:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "لِإِيلَافِ", analysis: "«ل» حرف جر دی، «إيلاف» مجرور دی (متعلق به فعل په سورة قبل ده)."),
+        PashtoWordAnalysis(word: "قُرَيْشٍ", analysis: "مضافإليه او مجرور دی (غیر منصرف دی خو دلته د معرفت له امله مجرور بالکسره دی)."),
+      ],
+      sentenceNote: "",
+    ),
+    '107:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "أَرَأَيْتَ", analysis: "همزه استفهام، «رأيت» فعل او فاعل دي."),
+        PashtoWordAnalysis(word: "الَّذِي", analysis: "اسم موصول دی په محل نصب کې مفعول به دی."),
+        PashtoWordAnalysis(word: "يُكَذِّبُ", analysis: "فعل مضارع دی، فاعل مستتر دی."),
+        PashtoWordAnalysis(word: "بِالدِّينِ", analysis: "جار و مجرور دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '108:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "إِنَّا", analysis: "إن حرف مشبه بالفعل، «نا» ضمیر اسم دی."),
+        PashtoWordAnalysis(word: "أَعْطَيْنَاكَ", analysis: "«أعطينا» فعل او فاعل، «ک» ضمیر مفعول به اول دی."),
+        PashtoWordAnalysis(word: "الْكَوْثَرَ", analysis: "مفعول به دوم او منصوب دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '109:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "قُلْ", analysis: "فعل امر دی، فاعل مستتر (انت) دی."),
+        PashtoWordAnalysis(word: "يَا", analysis: "حرف نداء دی."),
+        PashtoWordAnalysis(word: "أَيُّهَا", analysis: "«أی» منادا مفرد علم دی (مبنی بر ضم در محل نصب)، «ها» حرف تنبیه دی."),
+        PashtoWordAnalysis(word: "الْكَافِرُونَ", analysis: "بدل دی (یا نعت دی) از أی مرفوع به واو دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '110:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "إِذَا", analysis: "ظرف زمان متضمن معنی شرط دی."),
+        PashtoWordAnalysis(word: "جَاءَ", analysis: "فعل ماضی دی."),
+        PashtoWordAnalysis(word: "نَصْرُ", analysis: "فاعل مرفوع دی، مضاف دی."),
+        PashtoWordAnalysis(word: "اللَّهِ", analysis: "مضافإليه او مجرور دی."),
+        PashtoWordAnalysis(word: "وَالْفَتْحُ", analysis: "«واو» عطف دی، «الفتح» معطوف دی پر نصر او مرفوع دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '111:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "تَبَّتْ", analysis: "فعل ماضی دی، «ت» د مؤنث علامه ده."),
+        PashtoWordAnalysis(word: "يَدَا", analysis: "فاعل مرفوع دی (علامت یې «الف» ده ځکه مثنی دی)، مضاف دی."),
+        PashtoWordAnalysis(word: "أَبِي", analysis: "مضافإليه او مجرور دی (علامت یې «یا» ده ځکه له اسماء خمسه دی)، مضاف هم دی."),
+        PashtoWordAnalysis(word: "لَهَبٍ", analysis: "مضافإليه او مجرور دی."),
+        PashtoWordAnalysis(word: "وَتَبَّ", analysis: "«واو» عطف دی، «تب» فعل ماضی دی فاعل یې مستتر دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '112:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "قُلْ", analysis: "فعل امر دی، فاعل مستتر دی."),
+        PashtoWordAnalysis(word: "هُوَ", analysis: "ضمیر فصل (یا مبتدا) دی."),
+        PashtoWordAnalysis(word: "اللَّهُ", analysis: "مبتدا (یا خبر) مرفوع دی."),
+        PashtoWordAnalysis(word: "أَحَدٌ", analysis: "خبر دی او مرفوع دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '113:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "قُلْ", analysis: "فعل امر دی، فاعل مستتر دی."),
+        PashtoWordAnalysis(word: "أَعُوذُ", analysis: "فعل مضارع دی، فاعل یې مستتر (أنا) دی."),
+        PashtoWordAnalysis(word: "بِرَبِّ", analysis: "جار و مجرور دی، مضاف دی."),
+        PashtoWordAnalysis(word: "الْفَلَقِ", analysis: "مضافإليه او مجرور دی."),
+      ],
+      sentenceNote: "",
+    ),
+    '114:1': PashtoIrabAnalysis(
+      title: "د کلماتو نحوي ترکیب او اعراب",
+      words: [
+        PashtoWordAnalysis(word: "قُلْ", analysis: "فعل امر دی، فاعل مستتر دی."),
+        PashtoWordAnalysis(word: "أَعُوذُ", analysis: "فعل مضارع دی، فاعل یې مستتر (أنا) دی."),
+        PashtoWordAnalysis(word: "بِرَبِّ", analysis: "جار و مجرور دی، مضاف دی."),
+        PashtoWordAnalysis(word: "النَّاسِ", analysis: "مضافإليه او مجرور دی."),
+      ],
+      sentenceNote: "",
+    ),
+  };
+
+  /// Displays the beautiful educational Pashto I'rab bottom sheet
+  void _showIrabBottomSheet(BuildContext context, Ayah ayah) {
+    final String key = "${widget.surah.number}:${ayah.number}";
+    final irab = ayah.irabAnalysis ?? _builtInIrab[key];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: EdgeInsets.only(
+            top: 20,
+            left: 20,
+            right: 20,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 48,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFC8E6C9),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE8F5E9),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        'سورت ${widget.surah.arabicName} : آیت ${ayah.number}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1B5E20),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, size: 20),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  irab?.title ?? 'د کلماتو نحوي ترکیب او اعراب (په پښتو ژبه)',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1B5E20),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF1F8F5),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFC8E6C9)),
+                  ),
+                  child: Text(
+                    ayah.arabicText,
+                    textDirection: TextDirection.rtl,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1F2937),
+                      height: 1.8,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                if (irab != null) ...[
+                  const Text(
+                    'د هرې کلمې نحوي جلا شننه:',
+                    textDirection: TextDirection.rtl,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF2E7D32),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  ...irab.words.map((item) {
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF9FBF9),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE8EFE8)),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        textDirection: TextDirection.rtl,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF2E7D32),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              item.word,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              item.analysis,
+                              textDirection: TextDirection.rtl,
+                              textAlign: TextAlign.right,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF374151),
+                                height: 1.5,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                  if (irab.sentenceNote.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE8F5E9),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFA5D6A7)),
+                      ),
+                      child: Text(
+                        '💡 ${irab.sentenceNote}',
+                        textDirection: TextDirection.rtl,
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF1B5E20),
+                          height: 1.6,
+                        ),
+                      ),
+                    ),
+                  ],
+                ] else ...[
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF9FBF9),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFE8EFE8)),
+                    ),
+                    child: const Text(
+                      'د دې آیت لپاره د نحوي ترکیب معلومات په راتلونکي اپډېټ کې اضافه کیږي. د سورت الفاتحة ۱ نمبر آیت خلاص کړئ.',
+                      textDirection: TextDirection.rtl,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF6B7280),
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
